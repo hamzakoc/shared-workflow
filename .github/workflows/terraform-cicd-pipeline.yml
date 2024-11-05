@@ -147,6 +147,6 @@ jobs:
         with:
           name: terraform-plan
 
-      - name: Notify Completion
-        run: |
-             echo "Terraform Action ($ACTION) completed for environment: $ENVIRONMENT."
+      # - name: Notify Completion
+      #   run: |
+      #        echo "Terraform Action ($ACTION) completed for environment: $ENVIRONMENT."

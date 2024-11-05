@@ -1,0 +1,148 @@
+# .github/workflows/terraform_pipeline.yml
+
+name: Terraform CI/CD Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform: plan, apply, or destroy'
+        required: true
+        default: 'plan'
+        options:
+          - 'plan'
+          - 'apply'
+          - 'destroy'
+      environment:
+        description: 'Deployment environment: dev, staging, or prod'
+        required: true
+        default: 'dev'
+        options:
+          - 'dev'
+          - 'staging'
+          - 'prod'
+      terraform_version:
+        description: 'Terraform version to use'
+        required: false
+        default: '1.5.5'
+      backend_config:
+        description: 'Backend configuration file for remote state'
+        required: false
+        default: 'backend.tfvars'
+      additional_vars:
+        description: 'Additional Terraform variables (as JSON string)'
+        required: false
+        default: '{}'
+
+env:
+  TF_LOG: DEBUG  # Enable detailed logging for troubleshooting
+  TF_INPUT: false  # Disable interactive prompts in CI
+
+jobs:
+  init:
+    name: Initialize Terraform
+    runs-on: ubuntu-latest
+    outputs:
+      workspace: ${{ steps.set_workspace.outputs.workspace }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+        
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Set Terraform Workspace
+        id: set_workspace
+        run: |
+          terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }}
+          echo "workspace=${{ inputs.environment }}" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        run: terraform init -backend-config=${{ inputs.backend_config }}
+        env:
+          TF_VAR_additional: ${{ inputs.additional_vars }}
+
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    needs: init
+    if: inputs.action == 'plan'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+        
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Run Terraform Plan
+        run: |
+          terraform plan -var-file=${{ inputs.environment }}.tfvars -input=false -out=tfplan
+          terraform show -json tfplan > tfplan.json
+        env:
+          TF_VAR_additional: ${{ inputs.additional_vars }}
+
+      - name: Upload Plan as Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-plan
+          path: tfplan.json
+
+      - name: Comment Plan Summary
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: tfplan.json
+
+  apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    needs: [init, plan]
+    if: inputs.action == 'apply'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+        
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Terraform Apply
+        run: terraform apply -input=false -auto-approve tfplan
+        env:
+          TF_VAR_additional: ${{ inputs.additional_vars }}
+
+  destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+    needs: init
+    if: inputs.action == 'destroy'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+        
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Terraform Destroy
+        run: terraform destroy -var-file=${{ inputs.environment }}.tfvars -input=false -auto-approve
+        env:
+          TF_VAR_additional: ${{ inputs.additional_vars }}
+
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Delete Terraform Plan Artifact
+        uses: actions/delete-artifact@v1
+        with:
+          name: terraform-plan
+
+      - name: Notify Completion
+        run: echo "Terraform Action (${{ inputs.action }}) completed for environment: ${{ inputs.environment }}."

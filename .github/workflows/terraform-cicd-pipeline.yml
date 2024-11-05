@@ -1,49 +1,47 @@
 # .github/workflows/terraform_pipeline.yml
 
-name: Terraform CI/CD Pipeline
+name: Terraform CI/CD Pipeline for Azure
 
 on:
+  push:
+    branches:
+      - 'main'
+      - 'develop'
+  pull_request:
+    types: [closed]
+    branches:
+      - main  # Only run apply on main after PR approval
   workflow_dispatch:
     inputs:
       action:
-        description: 'Action to perform: plan, apply, or destroy'
+        description: 'Action to perform (init-plan, apply, or destroy)'
         required: true
-        default: 'plan'
+        default: 'init-plan'
         options:
-          - 'plan'
+          - 'init-plan'
           - 'apply'
           - 'destroy'
-      environment:
-        description: 'Deployment environment: dev, staging, or prod'
-        required: true
-        default: 'dev'
-        options:
-          - 'dev'
-          - 'staging'
-          - 'prod'
-      terraform_version:
-        description: 'Terraform version to use'
-        required: false
-        default: '1.5.5'
-      backend_config:
-        description: 'Backend configuration file for remote state'
-        required: false
-        default: 'backend.tfvars'
-      additional_vars:
-        description: 'Additional Terraform variables (as JSON string)'
-        required: false
-        default: '{}'
 
 env:
-  TF_LOG: DEBUG  # Enable detailed logging for troubleshooting
-  TF_INPUT: false  # Disable interactive prompts in CI
+  TF_LOG: DEBUG
+  TF_INPUT: false
 
 jobs:
-  init:
-    name: Initialize Terraform
+  init_and_plan:
+    name: Terraform Init and Plan
     runs-on: ubuntu-latest
-    outputs:
-      workspace: ${{ steps.set_workspace.outputs.workspace }}
+    if: github.event_name == 'push' || github.event.inputs.action == 'init-plan'
+    env:
+      ARM_SUBSCRIPTION_ID: ${{ github.ref == 'refs/heads/main' && vars.PROD_SUBSCRIPTION_ID || vars.DEV_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
+      ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+      BACKEND_RESOURCE_GROUP_NAME: ${{ vars.BACKEND_RESOURCE_GROUP_NAME }}
+      BACKEND_STORAGE_ACCOUNT_NAME: ${{ vars.BACKEND_STORAGE_ACCOUNT_NAME }}
+      BACKEND_STORAGE_CONTAINER_NAME: ${{ vars.BACKEND_STORAGE_CONTAINER_NAME }}
+      TF_VAR_application_name: ${{ env.APPLICATION_NAME }}
+      TF_VAR_environment_name: ${{ github.ref_name }}
+      TF_BACKEND_KEY: ${{ env.APPLICATION_NAME }}-${{ github.ref_name }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
@@ -51,38 +49,23 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: ${{ inputs.terraform_version }}
-
-      - name: Set Terraform Workspace
-        id: set_workspace
+          terraform_version: ${{ github.event.inputs.terraform_version || '1.5.5' }}
+      
+      - name: Terraform Init with Azure Backend
         run: |
-          terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }}
-          echo "workspace=${{ inputs.environment }}" >> $GITHUB_ENV
-      - name: Terraform Init
-        run: terraform init -backend-config=${{ inputs.backend_config }}
+          terraform init \
+            -backend-config="resource_group_name=$BACKEND_RESOURCE_GROUP_NAME" \
+            -backend-config="storage_account_name=$BACKEND_STORAGE_ACCOUNT_NAME" \
+            -backend-config="container_name=$BACKEND_STORAGE_CONTAINER_NAME" \
+            -backend-config="key=$TF_BACKEND_KEY" \
+            -reconfigure
         env:
-          TF_VAR_additional: ${{ inputs.additional_vars }}
+          TF_VAR_additional: ${{ github.event.inputs.additional_vars || '{}' }}
 
-  plan:
-    name: Terraform Plan
-    runs-on: ubuntu-latest
-    needs: init
-    if: ${{ inputs.action == 'plan' }}
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v2
-        
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: ${{ inputs.terraform_version }}
-
-      - name: Run Terraform Plan
+      - name: Terraform Plan
         run: |
-          terraform plan -var-file=${{ inputs.environment }}.tfvars -input=false -out=tfplan
+          terraform plan -var-file=${{ github.ref_name == 'main' && 'prod.tfvars' || 'dev.tfvars' }} -input=false -out=tfplan
           terraform show -json tfplan > tfplan.json
-        env:
-          TF_VAR_additional: ${{ inputs.additional_vars }}
 
       - name: Upload Plan as Artifact
         uses: actions/upload-artifact@v3
@@ -90,63 +73,60 @@ jobs:
           name: terraform-plan
           path: tfplan.json
 
-      - name: Comment Plan Summary
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          path: tfplan.json
-
   apply:
     name: Terraform Apply
     runs-on: ubuntu-latest
-    needs: [init, plan]
-    if: ${{ inputs.action == 'apply' }}
+    if: ${{ github.event.pull_request.merged && github.ref == 'refs/heads/main' }}
+    needs: init_and_plan
+    env:
+      ARM_SUBSCRIPTION_ID: ${{ vars.PROD_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
+      ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
-        
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: ${{ inputs.terraform_version }}
+          terraform_version: ${{ github.event.inputs.terraform_version || '1.5.5' }}
 
       - name: Terraform Apply
         run: terraform apply -input=false -auto-approve tfplan
-        env:
-          TF_VAR_additional: ${{ inputs.additional_vars }}
 
   destroy:
     name: Terraform Destroy
     runs-on: ubuntu-latest
-    needs: init
-    if: ${{ inputs.action == 'destroy' }}
+    if: ${{ github.event.inputs.action == 'destroy' }}
+    env:
+      ARM_SUBSCRIPTION_ID: ${{ github.ref == 'refs/heads/main' && vars.PROD_SUBSCRIPTION_ID || vars.DEV_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ vars.ARM_TENANT_ID }}
+      ARM_CLIENT_ID: ${{ vars.ARM_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
-        
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: ${{ inputs.terraform_version }}
+          terraform_version: ${{ github.event.inputs.terraform_version || '1.5.5' }}
 
       - name: Terraform Destroy
-        run: terraform destroy -var-file=${{ inputs.environment }}.tfvars -input=false -auto-approve
-        env:
-          TF_VAR_additional: ${{ inputs.additional_vars }}
-
+        run: terraform destroy -var-file=${{ github.ref_name == 'main' && 'prod.tfvars' || 'dev.tfvars' }} -input=false -auto-approve
 
   cleanup:
     name: Cleanup
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    env:
-      ACTION: ${{ inputs.action }}
-      ENVIRONMENT: ${{ inputs.environment }}
     steps:
       - name: Delete Terraform Plan Artifact
+        if: ${{ github.event.inputs.action == 'init-plan' || github.event.inputs.action == 'apply' }}
         uses: actions/delete-artifact@v1
         with:
           name: terraform-plan
 
       - name: Notify Completion
         run: |
-             echo "Terraform Action ($ACTION) completed for environment: $ENVIRONMENT."
+          echo "Terraform action completed. Action: ${{ github.event.inputs.action }}."

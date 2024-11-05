@@ -138,7 +138,6 @@ jobs:
   cleanup:
     name: Cleanup
     runs-on: ubuntu-latest
-    if: always()
     env:
       ACTION: ${{ inputs.action }}
       ENVIRONMENT: ${{ inputs.environment }}
@@ -149,4 +148,5 @@ jobs:
           name: terraform-plan
 
       - name: Notify Completion
+        if: always()
         run: echo "Terraform Action ($ACTION) completed for environment: $ENVIRONMENT."

@@ -148,5 +148,5 @@ jobs:
           name: terraform-plan
 
       - name: Notify Completion
-        if: always()
+        if: ${{ always() }}
         run: echo "Terraform Action ($ACTION) completed for environment: $ENVIRONMENT."

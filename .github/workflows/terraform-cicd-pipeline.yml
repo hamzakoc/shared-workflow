@@ -145,4 +145,4 @@ jobs:
           name: terraform-plan
 
       - name: Notify Completion
-        run: echo "Terraform Action (${{ inputs.action }}) completed for environment: ${{ inputs.environment }}."
+        run: echo "Terraform Action (${{ env.TF_ACTION }}) completed for environment: ${{ env.TF_ENVIRONMENT }}."

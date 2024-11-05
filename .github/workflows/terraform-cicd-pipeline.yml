@@ -58,7 +58,6 @@ jobs:
         run: |
           terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }}
           echo "workspace=${{ inputs.environment }}" >> $GITHUB_ENV
-
       - name: Terraform Init
         run: terraform init -backend-config=${{ inputs.backend_config }}
         env:
@@ -68,7 +67,7 @@ jobs:
     name: Terraform Plan
     runs-on: ubuntu-latest
     needs: init
-    if: inputs.action == 'plan'
+    if: ${{ inputs.action == 'plan' }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
@@ -100,7 +99,7 @@ jobs:
     name: Terraform Apply
     runs-on: ubuntu-latest
     needs: [init, plan]
-    if: inputs.action == 'apply'
+    if: ${{ inputs.action == 'apply' }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
@@ -119,7 +118,7 @@ jobs:
     name: Terraform Destroy
     runs-on: ubuntu-latest
     needs: init
-    if: inputs.action == 'destroy'
+    if: ${{ inputs.action == 'destroy' }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
@@ -138,6 +137,7 @@ jobs:
   cleanup:
     name: Cleanup
     runs-on: ubuntu-latest
+    if: ${{ always() }}
     env:
       ACTION: ${{ inputs.action }}
       ENVIRONMENT: ${{ inputs.environment }}
@@ -148,5 +148,4 @@ jobs:
           name: terraform-plan
 
       - name: Notify Completion
-        if: ${{ always() }}
         run: echo "Terraform Action ($ACTION) completed for environment: $ENVIRONMENT."

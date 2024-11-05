@@ -134,10 +134,14 @@ jobs:
         env:
           TF_VAR_additional: ${{ inputs.additional_vars }}
 
+
   cleanup:
     name: Cleanup
     runs-on: ubuntu-latest
     if: always()
+    env:
+      ACTION: ${{ inputs.action }}
+      ENVIRONMENT: ${{ inputs.environment }}
     steps:
       - name: Delete Terraform Plan Artifact
         uses: actions/delete-artifact@v1
@@ -145,4 +149,4 @@ jobs:
           name: terraform-plan
 
       - name: Notify Completion
-        run: echo "Terraform Action (${{ env.TF_ACTION }}) completed for environment: ${{ env.TF_ENVIRONMENT }}."
+        run: echo "Terraform Action ($ACTION) completed for environment: $ENVIRONMENT."

@@ -25,6 +25,7 @@ on:
 env:
   TF_LOG: DEBUG
   TF_INPUT: false
+  APPLICATION_NAME: "your-app-name"
 
 jobs:
   init_and_plan:
